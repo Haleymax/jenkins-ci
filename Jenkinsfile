@@ -37,7 +37,6 @@ pipeline {
     environment {
         APP_NAME = 'jenkins-test-app'
         BUILD_TIME = "${new Date().format('yyyy-MM-dd HH:mm:ss')}"
-        DOCKER_IMAGE = "${APP_NAME}:${params.VERSION}"
     }
     
     stages {
@@ -63,17 +62,19 @@ pipeline {
                 // 自动检出当前触发构建的代码
                 checkout scm
                 script {
-                    // 获取Git信息
-                    env.GIT_COMMIT_SHORT = sh(
-                        script: 'git rev-parse --short HEAD',
-                        returnStdout: true
-                    ).trim()
-                    env.GIT_BRANCH = sh(
-                        script: 'git rev-parse --abbrev-ref HEAD',
-                        returnStdout: true
-                    ).trim()
-                    echo "Git分支: ${env.GIT_BRANCH}"
-                    echo "Git提交: ${env.GIT_COMMIT_SHORT}"
+                    // 获取Git信息 (跨平台兼容)
+                    try {
+                        echo "正在获取Git信息..."
+                        // 使用Jenkins内置的Git信息
+                        env.GIT_COMMIT_SHORT = env.GIT_COMMIT?.take(8) ?: 'unknown'
+                        env.GIT_BRANCH_NAME = env.GIT_BRANCH ?: 'unknown'
+                        echo "Git分支: ${env.GIT_BRANCH_NAME}"
+                        echo "Git提交: ${env.GIT_COMMIT_SHORT}"
+                    } catch (Exception e) {
+                        echo "获取Git信息时出现问题: ${e.getMessage()}"
+                        env.GIT_COMMIT_SHORT = 'unknown'
+                        env.GIT_BRANCH_NAME = 'unknown'
+                    }
                 }
             }
         }
@@ -91,7 +92,7 @@ pipeline {
         
         stage('测试') {
             when {
-                not { params.SKIP_TESTS }
+                expression { !params.SKIP_TESTS }
             }
             parallel {
                 stage('单元测试') {
@@ -119,10 +120,10 @@ pipeline {
         
         stage('代码质量检查') {
             when {
-                anyOf {
-                    environment name: 'ENVIRONMENT', value: 'test'
-                    environment name: 'ENVIRONMENT', value: 'staging'
-                    environment name: 'ENVIRONMENT', value: 'prod'
+                expression { 
+                    params.ENVIRONMENT == 'test' || 
+                    params.ENVIRONMENT == 'staging' || 
+                    params.ENVIRONMENT == 'prod' 
                 }
             }
             steps {
@@ -143,10 +144,10 @@ pipeline {
         
         stage('部署') {
             when {
-                anyOf {
-                    environment name: 'ENVIRONMENT', value: 'test'
-                    environment name: 'ENVIRONMENT', value: 'staging'
-                    environment name: 'ENVIRONMENT', value: 'prod'
+                expression { 
+                    params.ENVIRONMENT == 'test' || 
+                    params.ENVIRONMENT == 'staging' || 
+                    params.ENVIRONMENT == 'prod' 
                 }
             }
             steps {
@@ -161,14 +162,28 @@ pipeline {
                         case 'staging':
                             echo "部署到预发布环境"
                             // 可能需要审批
-                            input message: '确认部署到预发布环境?', ok: '确认'
+                            try {
+                                timeout(time: 5, unit: 'MINUTES') {
+                                    input message: '确认部署到预发布环境?', ok: '确认'
+                                }
+                            } catch (Exception e) {
+                                echo "部署审批超时或被取消"
+                                error("部署被取消")
+                            }
                             break
                         case 'prod':
                             echo "部署到生产环境"
                             // 生产环境需要审批
-                            input message: '确认部署到生产环境?', ok: '确认', 
-                                  submitterParameter: 'APPROVER'
-                            echo "部署已被 ${env.APPROVER} 批准"
+                            try {
+                                timeout(time: 10, unit: 'MINUTES') {
+                                    input message: '确认部署到生产环境?', ok: '确认', 
+                                          submitterParameter: 'APPROVER'
+                                }
+                                echo "部署已被 ${env.APPROVER ?: '未知用户'} 批准"
+                            } catch (Exception e) {
+                                echo "生产环境部署审批超时或被取消"
+                                error("生产环境部署被取消")
+                            }
                             break
                         default:
                             echo "跳过部署阶段"
@@ -187,12 +202,12 @@ pipeline {
                     项目: ${env.APP_NAME}
                     版本: ${params.VERSION}
                     环境: ${params.ENVIRONMENT}
-                    分支: ${env.GIT_BRANCH}
+                    分支: ${env.GIT_BRANCH_NAME}
                     提交: ${env.GIT_COMMIT_SHORT}
                     构建时间: ${env.BUILD_TIME}
                     """
                     
-                    if (params.RELEASE_NOTES) {
+                    if (params.RELEASE_NOTES && params.RELEASE_NOTES.trim()) {
                         message += "\n发布说明:\n${params.RELEASE_NOTES}"
                     }
                     
@@ -207,7 +222,11 @@ pipeline {
             script {
                 echo "Pipeline 执行完成"
                 // 清理工作空间
-                cleanWs()
+                try {
+                    cleanWs()
+                } catch (Exception e) {
+                    echo "清理工作空间时出现问题: ${e.getMessage()}"
+                }
             }
         }
         success {
@@ -230,6 +249,12 @@ pipeline {
             script {
                 echo "⚠️ 构建不稳定"
                 echo "某些测试可能失败或有警告"
+            }
+        }
+        aborted {
+            script {
+                echo "🛑 构建被中止"
+                echo "Pipeline执行被用户或系统中止"
             }
         }
     }

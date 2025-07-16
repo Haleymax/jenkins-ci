@@ -1,0 +1,102 @@
+pipeline {
+    agent any
+    
+    // 简单的参数配置
+    parameters {
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'test', 'staging', 'prod'],
+            description: '选择部署环境'
+        )
+        string(
+            name: 'VERSION',
+            defaultValue: '1.0.0',
+            description: '版本号'
+        )
+        booleanParam(
+            name: 'SKIP_TESTS',
+            defaultValue: false,
+            description: '是否跳过测试阶段'
+        )
+    }
+    
+    // 简单的环境变量
+    environment {
+        APP_NAME = 'jenkins-test-app'
+    }
+    
+    stages {
+        stage('准备') {
+            steps {
+                echo "开始构建 ${env.APP_NAME}"
+                echo "目标环境: ${params.ENVIRONMENT}"
+                echo "版本号: ${params.VERSION}"
+            }
+        }
+        
+        stage('代码检出') {
+            steps {
+                checkout scm
+                echo "代码检出完成"
+            }
+        }
+        
+        stage('构建') {
+            steps {
+                echo "正在构建项目..."
+                sleep(2)
+                echo "构建完成!"
+            }
+        }
+        
+        stage('测试') {
+            when {
+                expression { !params.SKIP_TESTS }
+            }
+            steps {
+                echo "运行测试..."
+                sleep(3)
+                echo "测试完成!"
+            }
+        }
+        
+        stage('部署') {
+            when {
+                expression { params.ENVIRONMENT != 'dev' }
+            }
+            steps {
+                script {
+                    echo "部署到 ${params.ENVIRONMENT} 环境..."
+                    
+                    if (params.ENVIRONMENT == 'prod') {
+                        echo "生产环境部署需要额外验证"
+                        // 生产环境可以添加input步骤
+                    }
+                    
+                    echo "部署完成!"
+                }
+            }
+        }
+        
+        stage('通知') {
+            steps {
+                echo "🎉 Pipeline执行完成!"
+                echo "项目: ${env.APP_NAME}"
+                echo "版本: ${params.VERSION}"
+                echo "环境: ${params.ENVIRONMENT}"
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "Pipeline 执行完成"
+        }
+        success {
+            echo "✅ 构建成功!"
+        }
+        failure {
+            echo "❌ 构建失败!"
+        }
+    }
+}

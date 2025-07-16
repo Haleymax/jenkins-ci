@@ -7,6 +7,7 @@
 ```
 jenkins-ci/
 ├── Jenkinsfile                      # 基础Pipeline配置
+├── Jenkinsfile.simple               # 简化版本Pipeline配置
 ├── groovy-pipeline-example.groovy   # 高级Groovy Pipeline示例
 ├── PIPELINE_GUIDE.md               # Pipeline使用指南
 └── README.md                       # 项目说明
@@ -71,6 +72,29 @@ jenkins-ci/
 ## 🔧 自定义配置
 
 详细的配置说明请参考 [PIPELINE_GUIDE.md](./PIPELINE_GUIDE.md)
+
+## 🔧 故障排除
+
+### 常见语法错误修复
+
+如果遇到Jenkins Pipeline语法错误，可以使用简化版本：
+
+1. **使用简化版本**: `Jenkinsfile.simple` - 包含基本功能，语法简单
+2. **检查Jenkins版本**: 确保Jenkins版本支持Pipeline语法
+3. **验证插件**: 确保安装了必要的Pipeline插件
+
+### 版本说明
+
+- **Jenkinsfile**: 完整功能版本，包含所有高级特性
+- **Jenkinsfile.simple**: 简化版本，适合基础Jenkins环境
+- **groovy-pipeline-example.groovy**: 高级示例，需要额外插件支持
+
+### 快速测试
+
+如果主Jenkinsfile出现问题，可以：
+1. 临时重命名 `Jenkinsfile` 为 `Jenkinsfile.backup`
+2. 复制 `Jenkinsfile.simple` 为 `Jenkinsfile`
+3. 提交代码测试基本功能
 
 ## 📞 支持
 
