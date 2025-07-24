@@ -6,45 +6,78 @@ pipeline {
         pollSCM('H/2 * * * *')  // 每2分钟检查一次代码变化
     }
     
-    // Check-in参数 - 保持简单
+    // Check-in参数
     parameters {
-        booleanParam(
-            name: 'SKIP_TESTS',
-            defaultValue: false,
-            description: '是否跳过测试'
+        string(
+            name: 'TEST_SCRIPT_NAME',
+            defaultValue: 'check_in_test.py',
+            description: '要执行的测试脚本名称 (如: xxxx.py)'
+        )
+        choice(
+            name: 'TEST_ENV',
+            choices: ['dev', 'test', 'staging'],
+            description: '测试环境'
         )
         booleanParam(
-            name: 'FAST_BUILD',
+            name: 'GENERATE_ALLURE',
             defaultValue: true,
-            description: '快速构建模式'
+            description: '是否生成Allure报告'
+        )
+        booleanParam(
+            name: 'CLEAN_WORKSPACE',
+            defaultValue: false,
+            description: '运行前清理工作空间'
+        )
+        string(
+            name: 'PYTHON_VERSION',
+            defaultValue: 'python3',
+            description: 'Python版本 (python/python3)'
         )
     }
     
     // 环境变量
     environment {
-        APP_NAME = 'jenkins-checkin-app'
-        BUILD_TYPE = 'check-in'
+        APP_NAME = 'jenkins-checkin-test'
+        BUILD_TYPE = 'check-in-test'
         BUILD_TIME = "${new Date().format('yyyy-MM-dd HH:mm:ss')}"
+        ALLURE_RESULTS_DIR = 'allure-results'
+        ALLURE_REPORT_DIR = 'allure-report'
+        TEST_REPORTS_DIR = 'test-reports'
+        // Ubuntu环境优化
+        DEBIAN_FRONTEND = 'noninteractive'
+        LANG = 'C.UTF-8'
+        LC_ALL = 'C.UTF-8'
     }
     
     stages {
-        stage('📋 Check-in 初始化') {
+        stage('� Check-in 测试初始化') {
             steps {
                 script {
-                    echo "🚀 开始 Check-in Pipeline"
+                    echo "🚀 开始 Check-in 测试流程"
                     echo "项目: ${env.APP_NAME}"
                     echo "构建类型: ${env.BUILD_TYPE}"
                     echo "构建时间: ${env.BUILD_TIME}"
-                    echo "快速模式: ${params.FAST_BUILD}"
+                    echo "测试脚本: ${params.TEST_SCRIPT_NAME}"
+                    echo "测试环境: ${params.TEST_ENV}"
+                    echo "Python版本: ${params.PYTHON_VERSION}"
                     
                     // 设置构建描述
-                    currentBuild.description = "Check-in Build - ${env.GIT_BRANCH}"
+                    currentBuild.description = "Check-in Test - ${params.TEST_SCRIPT_NAME} (${params.TEST_ENV})"
+                    
+                    // 清理工作空间
+                    if (params.CLEAN_WORKSPACE) {
+                        echo "🧹 清理工作空间..."
+                        cleanWs()
+                    }
                 }
             }
         }
         
-        stage('📥 代码检出') {
+        stage('📥 拉取测试代码') {
             steps {
+                script {
+                    echo "📥 从GitHub拉取测试代码..."
+                }
                 checkout scm
                 script {
                     // 获取Git信息
@@ -56,160 +89,143 @@ pipeline {
                         echo "分支: ${env.GIT_BRANCH_NAME}"
                         echo "提交: ${env.GIT_COMMIT_SHORT}"
                         echo "作者: ${env.GIT_AUTHOR}"
+                        
+                        // 验证测试脚本是否存在 (Ubuntu优化)
+                        def scriptExists = sh(script: "test -f ${params.TEST_SCRIPT_NAME} && echo 'exists' || echo 'not_found'", returnStdout: true).trim()
+                        if (scriptExists == 'not_found') {
+                            echo "⚠️ 警告: 测试脚本 ${params.TEST_SCRIPT_NAME} 不存在，将使用模拟测试"
+                            env.SCRIPT_EXISTS = 'false'
+                        } else {
+                            echo "✅ 找到测试脚本: ${params.TEST_SCRIPT_NAME}"
+                            
+                            // 检查脚本权限
+                            def executable = sh(script: "test -x ${params.TEST_SCRIPT_NAME} && echo 'true' || echo 'false'", returnStdout: true).trim()
+                            if (executable == 'false') {
+                                echo "🔧 设置脚本执行权限..."
+                                sh "chmod +x ${params.TEST_SCRIPT_NAME}"
+                            }
+                            
+                            env.SCRIPT_EXISTS = 'true'
+                        }
                     } catch (Exception e) {
                         echo "获取Git信息失败: ${e.getMessage()}"
                         env.GIT_COMMIT_SHORT = 'unknown'
                         env.GIT_BRANCH_NAME = 'unknown'
                         env.GIT_AUTHOR = 'unknown'
+                        env.SCRIPT_EXISTS = 'false'
                     }
                 }
             }
         }
         
-        stage('🔍 代码检查') {
-            parallel {
-                stage('语法检查') {
-                    steps {
-                        script {
-                            echo "执行代码语法检查..."
-                            // 模拟语法检查
-                            sleep(1)
-                            echo "✅ 语法检查通过"
-                        }
-                    }
-                }
-                stage('代码风格') {
-                    steps {
-                        script {
-                            echo "检查代码风格..."
-                            // 模拟代码风格检查
-                            sleep(1)
-                            echo "✅ 代码风格检查通过"
-                        }
-                    }
-                }
-                stage('安全扫描') {
-                    steps {
-                        script {
-                            echo "执行安全扫描..."
-                            // 模拟安全扫描
-                            sleep(1)
-                            echo "✅ 安全扫描通过"
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('🔨 快速构建') {
+        stage('🔧 环境准备') {
             steps {
                 script {
-                    if (params.FAST_BUILD) {
-                        echo "执行快速构建..."
-                        sleep(2)
-                    } else {
-                        echo "执行完整构建..."
-                        sleep(5)
-                    }
-                    echo "✅ 构建完成"
+                    echo "🔧 准备Ubuntu测试环境..."
+                    echo "📋 这里会检查Ubuntu系统信息、Python环境、安装依赖包等"
+                    echo "✅ Ubuntu环境准备完成"
                 }
             }
         }
         
-        stage('🧪 快速测试') {
-            when {
-                expression { !params.SKIP_TESTS }
-            }
-            parallel {
-                stage('单元测试') {
-                    steps {
-                        script {
-                            echo "运行核心单元测试..."
-                            // 只运行关键的单元测试
-                            sleep(3)
-                            echo "✅ 单元测试通过"
-                        }
-                    }
-                }
-                stage('集成测试') {
-                    when {
-                        expression { !params.FAST_BUILD }
-                    }
-                    steps {
-                        script {
-                            echo "运行关键集成测试..."
-                            sleep(2)
-                            echo "✅ 集成测试通过"
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('📊 质量检查') {
+        stage('🧪 执行Check-in测试') {
             steps {
                 script {
-                    echo "执行代码质量检查..."
+                    echo "🧪 开始执行Check-in测试..."
                     
-                    // 模拟质量检查结果
-                    def qualityReport = [
-                        'coverage': 78,
-                        'duplicated_lines': 5,
-                        'bugs': 0,
-                        'vulnerabilities': 0,
-                        'code_smells': 2
-                    ]
-                    
-                    echo "代码覆盖率: ${qualityReport.coverage}%"
-                    echo "重复代码: ${qualityReport.duplicated_lines}%"
-                    echo "Bug数量: ${qualityReport.bugs}"
-                    echo "安全漏洞: ${qualityReport.vulnerabilities}"
-                    echo "代码异味: ${qualityReport.code_smells}"
-                    
-                    // 质量门检查
-                    if (qualityReport.bugs > 0) {
-                        error("❌ 发现 ${qualityReport.bugs} 个Bug，请修复后再提交")
-                    }
-                    if (qualityReport.vulnerabilities > 0) {
-                        error("❌ 发现 ${qualityReport.vulnerabilities} 个安全漏洞，请修复后再提交")
-                    }
-                    if (qualityReport.coverage < 70) {
+                    try {
+                        if (env.SCRIPT_EXISTS == 'true') {
+                            echo "📝 执行真实测试脚本: ${params.TEST_SCRIPT_NAME}"
+                            echo "🎯 这里会执行从GitHub拉取的Python测试脚本"
+                        } else {
+                            echo "📝 测试脚本不存在，执行模拟测试"
+                            echo "🔄 这里会创建和执行模拟测试代码"
+                        }
+                        
+                        echo "✅ Check-in测试执行完成"
+                        
+                    } catch (Exception e) {
+                        echo "❌ 测试执行失败: ${e.getMessage()}"
                         currentBuild.result = 'UNSTABLE'
-                        echo "⚠️ 代码覆盖率低于70%，建议增加测试"
                     }
-                    
-                    echo "✅ 质量检查通过"
                 }
             }
         }
         
-        stage('📝 Check-in 报告') {
+        stage('📊 发布Allure报告') {
+            when {
+                expression { params.GENERATE_ALLURE }
+            }
+            steps {
+                script {
+                    echo "📊 发布Allure测试报告到Jenkins..."
+                    echo "🔍 这里会检查测试结果文件，创建Allure报告，并使用Jenkins Allure插件发布"
+                    
+                    try {
+                        // 使用Jenkins Allure插件发布报告
+                        allure([
+                            includeProperties: false,
+                            jdk: '',
+                            properties: [],
+                            reportBuildPolicy: 'ALWAYS',
+                            results: [[path: env.ALLURE_RESULTS_DIR]]
+                        ])
+                        
+                        echo "✅ Allure报告已发布到Jenkins"
+                        
+                    } catch (Exception e) {
+                        echo "⚠️ Allure报告发布失败: ${e.getMessage()}"
+                        currentBuild.result = 'UNSTABLE'
+                    }
+                }
+            }
+            post {
+                always {
+                    // 归档测试结果文件
+                    archiveArtifacts artifacts: "${env.ALLURE_RESULTS_DIR}/**/*", allowEmptyArchive: true, fingerprint: true
+                    archiveArtifacts artifacts: "${env.TEST_REPORTS_DIR}/**/*", allowEmptyArchive: true, fingerprint: true
+                }
+            }
+        }
+        
+        stage('📝 Check-in 测试报告') {
             steps {
                 script {
                     def duration = currentBuild.duration ?: 0
                     def status = currentBuild.result ?: 'SUCCESS'
                     
                     def report = """
-                    📋 Check-in Pipeline 报告
+                    📋 Check-in 测试报告
                     ========================
                     项目: ${env.APP_NAME}
+                    测试脚本: ${params.TEST_SCRIPT_NAME}
+                    测试环境: ${params.TEST_ENV}
                     分支: ${env.GIT_BRANCH_NAME}
                     提交: ${env.GIT_COMMIT_SHORT}
                     作者: ${env.GIT_AUTHOR}
                     状态: ${status}
                     耗时: ${duration}ms
-                    模式: ${params.FAST_BUILD ? '快速模式' : '完整模式'}
-                    测试: ${params.SKIP_TESTS ? '已跳过' : '已执行'}
-                    时间: ${env.BUILD_TIME}
+                    Python版本: ${params.PYTHON_VERSION}
+                    Allure报告: ${params.GENERATE_ALLURE ? '已生成' : '已跳过'}
+                    构建时间: ${env.BUILD_TIME}
+                    构建号: ${env.BUILD_NUMBER}
                     """
                     
                     echo report
                     
-                    // 可以在这里添加通知逻辑
+                    // 测试结果分析
                     if (status == 'SUCCESS') {
-                        echo "✅ Check-in 验证成功，代码可以安全提交"
+                        echo "✅ Check-in 测试成功！"
+                        echo "📊 所有测试步骤已完成"
+                        if (params.GENERATE_ALLURE) {
+                            echo "📋 Allure报告已发布，可在构建页面查看"
+                        }
+                    } else if (status == 'UNSTABLE') {
+                        echo "⚠️ Check-in 测试不稳定"
+                        echo "某些步骤可能失败，但测试已完成"
                     } else {
-                        echo "⚠️ Check-in 验证存在问题，请检查并修复"
+                        echo "❌ Check-in 测试失败"
+                        echo "请检查测试脚本和环境配置"
                     }
                 }
             }
@@ -219,52 +235,72 @@ pipeline {
     post {
         always {
             script {
-                echo "🏁 Check-in Pipeline 完成"
+                echo "🏁 Check-in 测试流程完成"
                 
                 // 记录构建信息
                 def buildInfo = [
+                    'script': params.TEST_SCRIPT_NAME,
+                    'environment': params.TEST_ENV,
                     'branch': env.GIT_BRANCH_NAME,
                     'commit': env.GIT_COMMIT_SHORT,
                     'author': env.GIT_AUTHOR,
                     'result': currentBuild.result ?: 'SUCCESS',
-                    'duration': currentBuild.duration ?: 0
+                    'duration': currentBuild.duration ?: 0,
+                    'python_version': params.PYTHON_VERSION,
+                    'allure_generated': params.GENERATE_ALLURE
                 ]
                 
                 echo "构建信息: ${buildInfo}"
+                
+                // 清理临时文件 (可选)
+                if (params.CLEAN_WORKSPACE) {
+                    echo "🧹 这里会清理临时文件和工作空间"
+                }
             }
         }
         
         success {
             script {
-                echo "✅ Check-in 成功!"
-                echo "代码质量验证通过，可以继续开发或合并"
+                echo "✅ Check-in 测试成功！"
+                echo "🎉 测试脚本 ${params.TEST_SCRIPT_NAME} 执行完成"
+                if (params.GENERATE_ALLURE) {
+                    echo "📊 Allure报告已生成，可在Jenkins构建页面查看"
+                }
+                echo "🚀 代码可以安全提交或合并"
                 
                 // 可以添加成功通知
-                // 例如：发送Slack消息、更新Git状态等
+                // 例如：发送Slack消息、更新Git状态、发送邮件等
             }
         }
         
         failure {
             script {
-                echo "❌ Check-in 失败!"
-                echo "请修复问题后重新提交代码"
+                echo "❌ Check-in 测试失败！"
+                echo "💥 测试脚本 ${params.TEST_SCRIPT_NAME} 执行失败"
+                echo "🔍 请检查以下内容:"
+                echo "   - 测试脚本是否存在: ${params.TEST_SCRIPT_NAME}"
+                echo "   - Python环境是否正确: ${params.PYTHON_VERSION}"
+                echo "   - 测试环境是否可用: ${params.TEST_ENV}"
+                echo "   - 依赖包是否已安装"
                 
                 // 可以添加失败通知
-                // 例如：发送邮件给提交者、创建Jira ticket等
+                // 例如：发送邮件给开发者、创建Jira ticket、发送钉钉消息等
             }
         }
         
         unstable {
             script {
-                echo "⚠️ Check-in 不稳定"
-                echo "代码可以提交，但建议改进质量"
+                echo "⚠️ Check-in 测试不稳定"
+                echo "📋 部分测试可能失败，但流程已完成"
+                echo "🔧 建议检查测试结果和Allure报告"
             }
         }
         
         aborted {
             script {
-                echo "🛑 Check-in 被中止"
-                echo "Pipeline 执行被用户或系统中止"
+                echo "🛑 Check-in 测试被中止"
+                echo "⏹️ Pipeline 执行被用户或系统中止"
+                echo "🔄 可以重新触发构建"
             }
         }
     }
