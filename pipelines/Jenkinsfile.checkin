@@ -76,9 +76,16 @@ pipeline {
         stage('📥 拉取测试代码') {
             steps {
                 script {
-                    echo "📥 从GitHub拉取测试代码..."
+                    echo "📥 从指定仓库拉取测试代码..."
                 }
-                checkout scm
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[
+                        url: 'http://110.41.2.77:9999/haley/Android-automation-script.git',
+                        credentialsId: 'gitea-api'
+                    ]]
+                ])
                 script {
                     // 获取Git信息
                     try {
