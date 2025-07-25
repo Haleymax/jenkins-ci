@@ -77,6 +77,7 @@ pipeline {
             steps {
                 script {
                     echo "📥 从指定仓库拉取测试代码..."
+                    echo "🏠 当前工作空间：${env.WORKSPACE}"
                 }
                 checkout([
                     $class: 'GitSCM',
@@ -87,6 +88,9 @@ pipeline {
                     ]]
                 ])
                 script {
+                    echo "📂 代码拉取完成，文件列表："
+                    sh "ls -la"
+                    echo "📁 测试代码位置：${env.WORKSPACE}"
                     // 获取Git信息
                     try {
                         env.GIT_COMMIT_SHORT = env.GIT_COMMIT?.take(8) ?: 'unknown'
@@ -121,6 +125,47 @@ pipeline {
                         env.GIT_AUTHOR = 'unknown'
                         env.SCRIPT_EXISTS = 'false'
                     }
+                    
+                    // Python虚拟环境激活和依赖安装
+                    echo "🐍 激活Python虚拟环境..."
+                    try {
+                        // 检查是否存在虚拟环境目录
+                        def venvExists = sh(script: "test -d venv && echo 'exists' || echo 'not_found'", returnStdout: true).trim()
+                        if (venvExists == 'not_found') {
+                            echo "📦 创建Python虚拟环境..."
+                            sh "${params.PYTHON_VERSION} -m venv venv"
+                        } else {
+                            echo "✅ 虚拟环境已存在"
+                        }
+                        
+                        // 激活虚拟环境并检查Python版本
+                        echo "🔗 激活虚拟环境并检查Python版本..."
+                        sh """
+                            source venv/bin/activate
+                            python --version
+                            pip --version
+                        """
+                        
+                        echo "⏭️ 跳过依赖安装步骤"
+                        echo "📋 如需安装依赖，请手动执行或修改pipeline配置"
+                        
+                        // 验证虚拟环境状态
+                        echo "� 虚拟环境基本信息："
+                        sh """
+                            source venv/bin/activate
+                            echo "Python路径: \$(which python)"
+                            echo "Pip路径: \$(which pip)"
+                            echo "虚拟环境目录: \$(pwd)/venv"
+                        """
+                        
+                        env.VENV_ACTIVATED = 'true'
+                        echo "✅ Python虚拟环境准备完成"
+                        
+                    } catch (Exception e) {
+                        echo "❌ Python虚拟环境激活失败: ${e.getMessage()}"
+                        env.VENV_ACTIVATED = 'false'
+                        currentBuild.result = 'UNSTABLE'
+                    }
                 }
             }
         }
@@ -129,7 +174,36 @@ pipeline {
             steps {
                 script {
                     echo "🔧 准备Ubuntu测试环境..."
-                    echo "📋 这里会检查Ubuntu系统信息、Python环境、安装依赖包等"
+                    
+                    // 显示系统信息
+                    echo "�️ 系统信息："
+                    sh "uname -a"
+                    
+                    // 检查虚拟环境状态
+                    if (env.VENV_ACTIVATED == 'true') {
+                        echo "✅ Python虚拟环境已激活"
+                        sh """
+                            source venv/bin/activate
+                            echo "Python路径: \$(which python)"
+                            echo "Pip路径: \$(which pip)"
+                            python --version
+                        """
+                    } else {
+                        echo "⚠️ Python虚拟环境未激活，使用系统Python"
+                        sh """
+                            echo "系统Python路径: \$(which ${params.PYTHON_VERSION})"
+                            ${params.PYTHON_VERSION} --version
+                        """
+                    }
+                    
+                    // 检查Android相关环境（如果需要）
+                    echo "📱 检查Android环境..."
+                    try {
+                        sh "adb version || echo 'ADB未安装'"
+                    } catch (Exception e) {
+                        echo "⚠️ ADB检查失败: ${e.getMessage()}"
+                    }
+                    
                     echo "✅ Ubuntu环境准备完成"
                 }
             }
@@ -138,21 +212,55 @@ pipeline {
         stage('🧪 执行Check-in测试') {
             steps {
                 script {
-                    echo "🧪 开始执行Check-in测试..."
+                    echo "🧪 开始Check-in测试准备工作..."
                     
                     try {
-                        if (env.SCRIPT_EXISTS == 'true') {
-                            echo "📝 执行真实测试脚本: ${params.TEST_SCRIPT_NAME}"
-                            echo "🎯 这里会执行从GitHub拉取的Python测试脚本"
+                        // 检查test_case目录是否存在
+                        def testCaseDirExists = sh(script: "test -d test_case && echo 'exists' || echo 'not_found'", returnStdout: true).trim()
+                        
+                        if (testCaseDirExists == 'exists') {
+                            echo "� 找到test_case目录，列出所有测试脚本："
+                            sh """
+                                echo "📂 test_case目录内容："
+                                ls -la test_case/
+                                echo ""
+                                echo "🐍 Python测试脚本(.py文件)："
+                                find test_case -name "*.py" -type f | sort
+                                echo ""
+                                echo "� 脚本统计："
+                                echo "总文件数: \$(find test_case -type f | wc -l)"
+                                echo "Python脚本数: \$(find test_case -name "*.py" -type f | wc -l)"
+                                echo "其他文件数: \$(find test_case -type f ! -name "*.py" | wc -l)"
+                            """
                         } else {
-                            echo "📝 测试脚本不存在，执行模拟测试"
-                            echo "🔄 这里会创建和执行模拟测试代码"
+                            echo "⚠️ 未找到test_case目录，检查根目录下的Python文件："
+                            sh """
+                                echo "📂 根目录Python文件："
+                                find . -maxdepth 1 -name "*.py" -type f | sort
+                                echo ""
+                                echo "� 所有目录："
+                                find . -maxdepth 1 -type d | sort
+                            """
                         }
                         
-                        echo "✅ Check-in测试执行完成"
+                        // 检查指定的测试脚本
+                        if (env.SCRIPT_EXISTS == 'true') {
+                            echo "✅ 指定的测试脚本存在: ${params.TEST_SCRIPT_NAME}"
+                            sh """
+                                echo "📄 脚本详细信息："
+                                ls -la ${params.TEST_SCRIPT_NAME}
+                                echo "📝 脚本前10行内容："
+                                head -n 10 ${params.TEST_SCRIPT_NAME}
+                            """
+                        } else {
+                            echo "⚠️ 指定的测试脚本不存在: ${params.TEST_SCRIPT_NAME}"
+                        }
+                        
+                        echo "✅ 测试脚本检查完成"
+                        echo "🔄 暂时跳过脚本执行，仅进行环境检查"
                         
                     } catch (Exception e) {
-                        echo "❌ 测试执行失败: ${e.getMessage()}"
+                        echo "❌ 测试脚本检查失败: ${e.getMessage()}"
                         currentBuild.result = 'UNSTABLE'
                     }
                 }
